@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign Language Recognition</title>
+    <!-- 1. Load Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Style for mirrored video */
+        #webcam {
+            transform: scaleX(-1);
+            -webkit-transform: scaleX(-1);
+        }
+        /* Style for the video when it's off */
+        #webcam.off {
+            background-color: #333;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke-width='1.5' stroke='%23777' class='w-6 h-6'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h10.5a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H4.5A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z' /%3E%3C/svg%3E%0A");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 80px;
+            /* Re-apply transform: none so the placeholder icon isn't mirrored */
+            transform: none; 
+            -webkit-transform: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-4xl flex flex-col items-center">
+        <h1 class="text-3xl md:text-5xl font-bold text-center mb-6">Real-Time Sign Language Recognition</h1>
+        
+        <!-- Prediction Box -->
+        <div class="w-full h-32 md:h-48 bg-gray-800 rounded-lg flex items-center justify-center mb-6 shadow-2xl border-4 border-blue-500">
+            <span id="prediction-box" class="text-5xl md:text-8xl font-bold text-blue-300 transition-all duration-100">...</span>
+        </div>
+
+        <!-- Video Feed -->
+        <div class="w-full bg-gray-800 rounded-lg shadow-lg overflow-hidden relative" style="padding-top: 56.25%;"> <!-- 16:9 Aspect Ratio -->
+            <video id="webcam" autoplay playsinline class="absolute top-0 left-0 w-full h-full object-cover off"></video>
+            <div id="loading-spinner" class="absolute inset-0 flex items-center justify-center bg-gray-800 z-10" style="display: none;"> <!-- Hidden by default -->
+                <svg class="animate-spin h-10 w-10 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+            </div>
+        </div>
+        
+        <!-- Status Message -->
+        <p id="status-message" class="mt-4 text-gray-400">Camera is off. Press the button to start.</p>
+
+        <!-- Camera toggle button -->
+        <button id="toggleButton" class="w-full max-w-sm mt-6 text-lg font-semibold py-3 px-6 rounded-lg transition-colors duration-300 flex items-center justify-center gap-3">
+            <!-- Icon will be inserted here by JS -->
+        </button>
+    </div>
+
+    <!-- Hidden canvas for capturing frames -->
+    <canvas id="frame-canvas" class="hidden"></canvas>
+
+    <script>
+        // --- Element References ---
+        const video = document.getElementById('webcam');
+        const canvas = document.getElementById('frame-canvas');
+        const predictionBox = document.getElementById('prediction-box');
+        const statusMessage = document.getElementById('status-message');
+        const loadingSpinner = document.getElementById('loading-spinner');
+        const toggleButton = document.getElementById('toggleButton');
+
+        // --- State Variables ---
+        let localStream = null;
+        let predictionInterval = null;
+        
+        const constraints = {
+            video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: 'user'
+            }
+        };
+
+        // --- SVG Icons ---
+        const cameraOnIcon = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h10.5a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H4.5A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+            <span>Turn Off Camera</span>`;
+            
+        const cameraOffIcon = `
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M.75 12C.75 12 2.25 10.5 4.5 10.5S8.25 12 8.25 12S6.75 13.5 4.5 13.5S.75 12 .75 12zm13.5-1.5c-2.25 0-3.75 1.5-3.75 1.5s1.5 1.5 3.75 1.5 3.75-1.5 3.75-1.5-1.5-1.5-3.75-1.5zm-4.5 3.75h10.5a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25H4.5A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+            </svg>
+            <span>Turn On Camera</span>`;
+
+        // --- Core Functions ---
+
+        // Function to update button appearance
+        function updateButton(isCameraOn) {
+            if (isCameraOn) {
+                toggleButton.innerHTML = cameraOnIcon;
+                toggleButton.className = "w-full max-w-sm mt-6 text-lg font-semibold py-3 px-6 rounded-lg transition-colors duration-300 flex items-center justify-center gap-3 bg-red-600 hover:bg-red-700 text-white";
+            } else {
+                toggleButton.innerHTML = cameraOffIcon;
+                toggleButton.className = "w-full max-w-sm mt-6 text-lg font-semibold py-3 px-6 rounded-lg transition-colors duration-300 flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white";
+            }
+        }
+
+        // 1. Setup Webcam
+        async function startCamera() {
+            if (localStream) return; // Already on
+            
+            loadingSpinner.style.display = 'flex';
+            statusMessage.innerText = 'Connecting to webcam...';
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                localStream = stream;
+                video.classList.remove('off');
+
+                video.addEventListener('loadedmetadata', () => {
+                    // Set canvas dimensions once video is loaded
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    // Hide spinner and show video
+                    loadingSpinner.style.display = 'none';
+                    statusMessage.innerText = 'Connected. Starting prediction...';
+                    
+                    // Start sending frames for prediction
+                    // Send a frame every 200ms (5 predictions per second)
+                    predictionInterval = setInterval(sendFrame, 200); 
+                    updateButton(true);
+                });
+            } catch (err) {
+                console.error("Error accessing webcam: ", err);
+                statusMessage.innerText = 'Error: Could not access webcam. Please grant permission.';
+                loadingSpinner.style.display = 'none';
+                updateButton(false);
+            }
+        }
+
+        // 2. Stop Webcam
+        function stopCamera() {
+            if (!localStream) return; // Already off
+            
+            // Stop the prediction loop
+            if (predictionInterval) {
+                clearInterval(predictionInterval);
+                predictionInterval = null;
+            }
+
+            // Stop all tracks in the stream
+            localStream.getTracks().forEach(track => {
+                track.stop();
+            });
+            
+            // Clear video feed and reset state
+            video.srcObject = null;
+            video.classList.add('off');
+            localStream = null;
+            
+            // Reset UI
+            predictionBox.innerText = '...';
+            statusMessage.innerText = 'Camera is off. Press the button to start.';
+            loadingSpinner.style.display = 'none';
+            updateButton(false);
+        }
+
+        // 3. Send Frame to Backend
+        async function sendFrame() {
+            if (!localStream) return; // Exit if camera is off
+
+            const context = canvas.getContext('2d');
+            
+            // Draw the *un-mirored* video frame onto the canvas
+            // We'll flip it back in the Python server
+            context.save();
+            context.scale(-1, 1); // Flip horizontally
+            context.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+            context.restore();
+
+            // Get image data as Base64
+            const imageData = canvas.toDataURL('image/jpeg', 0.9); // 90% quality
+
+            try {
+                // Send to Flask server's /predict endpoint
+                const response = await fetch('http://127.0.0.1:5000/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: imageData }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                // Update the prediction box
+                if (result.prediction) {
+                    predictionBox.innerText = result.prediction.toUpperCase();
+                }
+
+                if (statusMessage.innerText !== '') {
+                    statusMessage.innerText = ''; // Clear status message on first successful prediction
+                }
+
+            } catch (error) {
+                console.error('Error sending frame:', error);
+                statusMessage.innerText = 'Error: Connection to server lost.';
+                stopCamera(); // Stop everything if the connection fails
+            }
+        }
+
+        // 4. Main Toggle Function
+        function toggleCamera() {
+            if (localStream) {
+                stopCamera();
+            } else {
+                startCamera();
+            }
+        }
+
+        // --- Initialization ---
+        toggleButton.addEventListener('click', toggleCamera);
+        updateButton(false); // Set initial button state to "Off"
+ 
+    </script>
+</body>
+</html>
+
