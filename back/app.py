@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -78,7 +78,6 @@ MODEL_PATH = 'sign_model.pth'
 HAND_MODEL_PATH = 'hand_landmarker.task'
 CLASS_NAMES = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9','NULL', 'A', 'B', 'BYE', 'C', 'D', 'E', 'GOOD', 'GOOD MORNING', 'HELLO', 'LITTLE BIT', 'NO', 'PARDON', 'PLEASE', 'PROJECT', 'WHATS UP', 'YES']
 
-# Hand skeleton edges
 hand_edges = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [0, 9], [9, 10], [10, 11], [11, 12], [0, 13], [13, 14], [14, 15], [15, 16], [0, 17], [17, 18], [18, 19], [19, 20]]
 undirected_hand_edges = hand_edges + [[j, i] for i, j in hand_edges]
 edge_index = torch.tensor(undirected_hand_edges, dtype=torch.long).t().contiguous()
@@ -95,6 +94,7 @@ def normalize_keypoints(kp_set):
 def load_models():
     device = torch.device('cpu')
     model = SignLanguageGCN(num_keypoints=21, num_features=3, layer_dims=[64, 128], num_classes=len(CLASS_NAMES))
+    
     if os.path.exists(MODEL_PATH):
         checkpoint = torch.load(MODEL_PATH, map_location=device, weights_only=False)
         state_dict = checkpoint['model_state_dict'] if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint else checkpoint
@@ -104,24 +104,31 @@ def load_models():
     if not os.path.exists(HAND_MODEL_PATH):
         urllib.request.urlretrieve("https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task", HAND_MODEL_PATH)
     
-    base_options = python.BaseOptions(model_asset_path=HAND_MODEL_PATH)
-    options = vision.HandLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.IMAGE, num_hands=1)
+    # NEW: Use BaseOptions and explicitly set Delegate to CPU to avoid GLES errors
+    base_options = python.BaseOptions(
+        model_asset_path=HAND_MODEL_PATH,
+        delegate=python.BaseOptions.Delegate.CPU 
+    )
+    options = vision.HandLandmarkerOptions(
+        base_options=base_options,
+        running_mode=vision.RunningMode.IMAGE,
+        num_hands=1
+    )
     detector = vision.HandLandmarker.create_from_options(options)
     
     return model, detector, device
 
 # --- Video Processing Class ---
-class SignLanguageTransformer(VideoTransformerBase):
+class SignLanguageProcessor(VideoProcessorBase):
     def __init__(self, model, detector, device):
         self.model = model
         self.detector = detector
         self.device = device
         self.latest_prediction = "..."
 
-    def transform(self, frame):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
-        
-        # Resize for speed
+        img = cv2.flip(img, 1)
         img_small = cv2.resize(img, (320, 240))
         img_rgb = cv2.cvtColor(img_small, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
@@ -131,7 +138,6 @@ class SignLanguageTransformer(VideoTransformerBase):
         if detection_result.hand_landmarks:
             keypoints = np.array([[lm.x, lm.y, lm.z] for lm in detection_result.hand_landmarks[0]])
             norm_kp = normalize_keypoints(keypoints)
-            
             x_tensor = torch.tensor(norm_kp, dtype=torch.float).to(self.device)
             graph_data = Data(x=x_tensor, edge_index=edge_index)
             batch = Batch.from_data_list([graph_data])
@@ -142,25 +148,25 @@ class SignLanguageTransformer(VideoTransformerBase):
         else:
             self.latest_prediction = "..."
             
-        return img
+        return frame
 
-# --- Streamlit UI ---
+# --- UI ---
 st.set_page_config(page_title="SignFlow Streamlit", layout="centered")
-st.title("🤟 Real-Time Sign Language Recognition")
-st.markdown("This version uses WebRTC for lower latency streaming.")
+st.title("🤟 SignFlow Real-Time")
 
 model_gnn, hand_detector, dev = load_models()
 
 webrtc_ctx = webrtc_streamer(
     key="sign-lang",
-    video_transformer_factory=lambda: SignLanguageTransformer(model_gnn, hand_detector, dev),
+    video_processor_factory=lambda: SignLanguageProcessor(model_gnn, hand_detector, dev),
     rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
     media_stream_constraints={"video": True, "audio": False},
 )
 
-if webrtc_ctx.video_transformer:
+if webrtc_ctx.video_processor:
     st.markdown(f"""
-        <div style="background-color: #1F2937; border: 4px solid #3B82F6; border-radius: 10px; padding: 20px; text-align: center;">
-            <h1 style="color: #93C5FD; font-size: 4rem; margin: 0;">{webrtc_ctx.video_transformer.latest_prediction}</h1>
+        <div style="background-color: #1F2937; border: 4px solid #3B82F6; border-radius: 10px; padding: 20px; text-align: center; margin-top: 20px;">
+            <p style="color: #93C5FD; font-size: 1.2rem; margin-bottom: 5px; opacity: 0.8;">CURRENT PREDICTION</p>
+            <h1 style="color: #93C5FD; font-size: 5rem; margin: 0;">{webrtc_ctx.video_processor.latest_prediction}</h1>
         </div>
     """, unsafe_content_supported=True)
