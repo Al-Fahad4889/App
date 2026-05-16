@@ -2,10 +2,11 @@ streamlit
 streamlit-webrtc>=0.47.0
 mediapipe
 
-Standard torch
+Standard torch with correct index-url syntax for requirements.txt
 
-torch--index-url https://download.pytorch.org/whl/cpu
-torchvision--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
 
 Use the simpler torch-geometric install to avoid C++ compilation errors
 
