@@ -1,23 +1,10 @@
-Core Streamlit and WebRTC
-
 streamlit
 streamlit-webrtc>=0.47.0
 aiortc
-
-Pin tornado to 6.3.3 to fix the BaseAsyncIOLoop error
-
 tornado==6.3.3
-
-AI and Vision Libraries
-
 mediapipe
 torch
 torchvision
 torch-geometric
-
-Utilities
-
-Pin numpy to < 2.0 to avoid breaking changes in MediaPipe/Torch
-
 numpy>=1.24.0,<2.0.0
 opencv-python-headless
