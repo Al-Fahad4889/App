@@ -1,8 +1,15 @@
 streamlit
-streamlit-webrtc
+streamlit-webrtc>=0.47.0
 mediapipe
 torch
 torchvision
 torch-geometric
 opencv-python-headless
 numpy<2.0.0
+aiortc
+
+Tornado 6.4 removed BaseAsyncIOLoop, which breaks streamlit-webrtc.
+
+Pinning to 6.3.3 fixes the ModuleNotFoundError in the eventloop.
+
+tornado==6.3.3
