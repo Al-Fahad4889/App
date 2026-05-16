@@ -1,15 +1,22 @@
 streamlit
 streamlit-webrtc>=0.47.0
 mediapipe
-torch
-torchvision
+
+Standard torch
+
+torch--index-url https://download.pytorch.org/whl/cpu
+torchvision--index-url https://download.pytorch.org/whl/cpu
+
+Use the simpler torch-geometric install to avoid C++ compilation errors
+
 torch-geometric
+
+Fix for numpy 2.0 breaking changes
+
+numpy>=1.24.0,<2.0.0
 opencv-python-headless
-numpy<2.0.0
 aiortc
 
-Tornado 6.4 removed BaseAsyncIOLoop, which breaks streamlit-webrtc.
-
-Pinning to 6.3.3 fixes the ModuleNotFoundError in the eventloop.
+Pin tornado to fix the BaseAsyncIOLoop error
 
 tornado==6.3.3
